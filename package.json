@@ -1,0 +1,10 @@
+{
+  "name": "elevate-opportunity-digest",
+  "version": "1.0.0",
+  "scripts": {
+    "digest": "bun run digest.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.95.2"
+  }
+}
