@@ -5,6 +5,8 @@
     "digest": "bun run digest.ts"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.95.2"
+    "@anthropic-ai/sdk": "^0.95.2",
+    "imapflow": "^1.0.0",
+    "mailparser": "^3.7.0"
   }
 }

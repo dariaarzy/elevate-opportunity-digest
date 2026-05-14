@@ -1,4 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { ImapFlow } from "imapflow";
+import { simpleParser } from "mailparser";
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
@@ -67,7 +69,95 @@ interface OppAnalysis {
   emailBody: string;
 }
 
-// ── Data fetching ─────────────────────────────────────────────────────────────
+// ── Gmail IMAP ────────────────────────────────────────────────────────────────
+
+interface EmailSnippet {
+  date: Date;
+  from: string;
+  to: string;
+  subject: string;
+  snippet: string;
+}
+
+async function fetchEmailsForContacts(contacts: ContactSummary[]): Promise<string> {
+  const contactEmails = contacts.filter((c) => c.email).map((c) => c.email!);
+  if (contactEmails.length === 0) return "";
+
+  const gmailUser = process.env.GMAIL_USER;
+  const gmailPass = process.env.GMAIL_APP_PASSWORD;
+  if (!gmailUser || !gmailPass) {
+    console.warn("  GMAIL_USER or GMAIL_APP_PASSWORD not set — skipping email fetch.");
+    return "";
+  }
+
+  const client = new ImapFlow({
+    host: "imap.gmail.com",
+    port: 993,
+    secure: true,
+    auth: { user: gmailUser, pass: gmailPass },
+    logger: false,
+  });
+
+  const since = new Date();
+  since.setDate(since.getDate() - 90);
+
+  const snippets: EmailSnippet[] = [];
+
+  try {
+    await client.connect();
+
+    for (const mailbox of ["INBOX", "[Gmail]/Sent Mail"]) {
+      try {
+        await client.mailboxOpen(mailbox);
+      } catch {
+        continue;
+      }
+
+      for (const email of contactEmails) {
+        // Inbox: look for emails from the contact; Sent: look for emails to the contact
+        const criteria = mailbox === "INBOX" ? { from: email, since } : { to: email, since };
+        let uids = await client.search(criteria, { uid: true });
+        uids = uids.slice(-5); // most recent 5 per contact per mailbox
+        if (uids.length === 0) continue;
+
+        for await (const msg of client.fetch(uids, { source: true, uid: true })) {
+          const parsed = await simpleParser(msg.source);
+          const text = (parsed.text ?? "").slice(0, 600).replace(/\s+/g, " ").trim();
+          if (!text) continue;
+
+          const toAddr = parsed.to
+            ? Array.isArray(parsed.to)
+              ? parsed.to.map((a) => a.text).join(", ")
+              : parsed.to.text
+            : "";
+
+          snippets.push({
+            date: parsed.date ?? new Date(),
+            from: parsed.from?.text ?? "",
+            to: toAddr,
+            subject: parsed.subject ?? "(no subject)",
+            snippet: text,
+          });
+        }
+      }
+    }
+  } finally {
+    await client.logout().catch(() => {});
+  }
+
+  if (snippets.length === 0) return "";
+
+  snippets.sort((a, b) => b.date.getTime() - a.date.getTime());
+
+  return snippets
+    .map(
+      (s) =>
+        `### Email: ${s.subject}\nDate: ${s.date.toLocaleDateString("en-US")}\nFrom: ${s.from}\nTo: ${s.to}\n${s.snippet}`
+    )
+    .join("\n\n");
+}
+
+// ── Lightfield data fetching ──────────────────────────────────────────────────
 
 async function fetchAllOpportunities(): Promise<LFRecord[]> {
   const all: LFRecord[] = [];
@@ -144,13 +234,11 @@ async function getEngagementHistory(opp: LFRecord): Promise<string> {
 
   const parts: string[] = [];
 
-  const validNotes = notes.filter((n): n is { title: string; content: string } => n !== null);
-  for (const note of validNotes) {
+  for (const note of notes.filter((n): n is { title: string; content: string } => n !== null)) {
     parts.push(`### Note: ${note.title}\n${note.content}`);
   }
 
-  const validMeetings = meetings.filter((m): m is { title: string; summary: string } => m !== null);
-  for (const meeting of validMeetings) {
+  for (const meeting of meetings.filter((m): m is { title: string; summary: string } => m !== null)) {
     parts.push(`### Meeting Summary: ${meeting.title}\n${meeting.summary}`);
   }
 
@@ -166,7 +254,8 @@ async function analyzeOpportunity(
   stage: string,
   statusSummary: string,
   contacts: ContactSummary[],
-  engagementHistory: string
+  engagementHistory: string,
+  recentEmails: string
 ): Promise<OppAnalysis> {
   const contactInfo =
     contacts.length > 0
@@ -177,6 +266,10 @@ async function analyzeOpportunity(
 
   const historySection = engagementHistory
     ? `\n\n## Full engagement history (notes & meeting summaries)\n${engagementHistory}`
+    : "";
+
+  const emailSection = recentEmails
+    ? `\n\n## Recent emails (last 90 days)\n${recentEmails}`
     : "";
 
   const prompt = `You are ghostwriting emails for Russ Morton, Founder/CEO of Elevate. Elevate helps MSPs (managed service providers) build and launch AI practices for their business clients.
@@ -218,7 +311,7 @@ Stage: ${stage}
 Key contacts: ${contactInfo}
 
 ## CRM status summary (AI-generated)
-${statusSummary}${historySection}
+${statusSummary}${historySection}${emailSection}
 
 ---
 
@@ -228,7 +321,7 @@ Based on all of the above, produce:
 
 2. EMAIL_SUBJECT: A subject line in Russ's style (clear, direct, not clever).
 
-3. EMAIL_BODY: An email written in Russ's voice. Reference specific details from the engagement history — be concrete, not generic. Match the length to the situation (check-in = 1–3 sentences; substantive follow-up = 80–150 words). Close with -Russ.
+3. EMAIL_BODY: An email written in Russ's voice. Reference specific details from the engagement history and recent emails — be concrete, not generic. Match the length to the situation (check-in = 1–3 sentences; substantive follow-up = 80–150 words). Close with -Russ.
 
 Respond in exactly this format:
 NEXT_STEP: <text>
@@ -362,7 +455,12 @@ async function main() {
       getEngagementHistory(opp),
     ]);
 
-    const analysis = await analyzeOpportunity(name, stage, statusSummary, contacts, engagementHistory);
+    const recentEmails = await fetchEmailsForContacts(contacts);
+    if (recentEmails) {
+      console.log(`    Found email history for "${name}".`);
+    }
+
+    const analysis = await analyzeOpportunity(name, stage, statusSummary, contacts, engagementHistory, recentEmails);
     results.push({ name, stage, link: opp.httpLink, analysis, contacts });
   }
 
