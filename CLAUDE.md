@@ -2,6 +2,16 @@
 
 Weekly Claude Code routine that pulls active opportunities from Lightfield, drafts a next-step and email for each one in Russ's voice, and posts the digest as a threaded Slack message to `#elevatemsp-primary-gtm`.
 
+## Auto-run behavior (cloud sessions)
+
+**If you are running in a cloud session (`CLAUDE_CODE_REMOTE=true`) and no other task has been given, your job is to run the digest immediately — do not wait for user input.**
+
+```bash
+bun run digest
+```
+
+Run it, report what was posted to Slack, commit any lockfile changes, and push. That's the whole job.
+
 ## Running the digest
 
 ```bash
