@@ -5,7 +5,7 @@
     "digest": "bun run digest.ts"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.95.2",
+    "@anthropic-ai/claude-agent-sdk": "^0.3.143",
     "imapflow": "^1.0.0",
     "mailparser": "^3.7.0"
   }

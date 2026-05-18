@@ -1,4 +1,4 @@
-import Anthropic from "@anthropic-ai/sdk";
+import { query } from "@anthropic-ai/claude-agent-sdk";
 import { ImapFlow } from "imapflow";
 import { simpleParser } from "mailparser";
 
@@ -247,8 +247,6 @@ async function getEngagementHistory(opp: LFRecord): Promise<string> {
 
 // ── Claude analysis ───────────────────────────────────────────────────────────
 
-const anthropic = new Anthropic();
-
 async function analyzeOpportunity(
   oppName: string,
   stage: string,
@@ -329,13 +327,12 @@ EMAIL_SUBJECT: <text>
 EMAIL_BODY:
 <email body text>`;
 
-  const message = await anthropic.messages.create({
-    model: "claude-sonnet-4-6",
-    max_tokens: 800,
-    messages: [{ role: "user", content: prompt }],
-  });
-
-  const text = message.content[0].type === "text" ? message.content[0].text : "";
+  let text = "";
+  for await (const message of query({ prompt })) {
+    if (message.type === "result" && message.subtype === "success") {
+      text = message.result;
+    }
+  }
 
   const nextStepMatch = text.match(/NEXT_STEP:\s*(.+)/);
   const subjectMatch = text.match(/EMAIL_SUBJECT:\s*(.+)/);
