@@ -105,7 +105,13 @@ async function fetchEmailsForContacts(contacts: ContactSummary[]): Promise<strin
 
   try {
     await client.connect();
+  } catch (err) {
+    console.warn(`  Gmail IMAP unavailable (${(err as NodeJS.ErrnoException).code ?? "error"}) — skipping email fetch.`);
+    await client.logout().catch(() => {});
+    return "";
+  }
 
+  try {
     for (const mailbox of ["INBOX", "[Gmail]/Sent Mail"]) {
       try {
         await client.mailboxOpen(mailbox);
