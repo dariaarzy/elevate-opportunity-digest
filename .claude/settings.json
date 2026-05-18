@@ -1,0 +1,24 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "mcp__claude_ai_Gmail__.*|mcp__claude_ai_Superhuman_Mail__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "input=$(cat); tool=$(echo \"$input\" | jq -r '.tool_name'); if echo \"$tool\" | grep -qiE 'send'; then echo '{\"decision\": \"block\", \"reason\": \"Blocked: sending email on Russ\\u2019s behalf is not permitted\"}'; exit 2; fi"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "input=$(cat); cmd=$(echo \"$input\" | jq -r '.tool_input.command // \"\"'); if echo \"$cmd\" | grep -qiE '(sendmail|\\bsmtp\\b|nodemailer|\\bmutt\\b|mail -s)'; then echo '{\"decision\": \"block\", \"reason\": \"Blocked: sending email on Russ\\u2019s behalf is not permitted\"}'; exit 2; fi"
+          }
+        ]
+      }
+    ]
+  }
+}
