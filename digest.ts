@@ -105,7 +105,13 @@ async function fetchEmailsForContacts(contacts: ContactSummary[]): Promise<strin
 
   try {
     await client.connect();
+  } catch {
+    console.warn("  Gmail IMAP unavailable (network blocked) — skipping email history.");
+    await client.logout().catch(() => {});
+    return "";
+  }
 
+  try {
     for (const mailbox of ["INBOX", "[Gmail]/Sent Mail"]) {
       try {
         await client.mailboxOpen(mailbox);
