@@ -2,6 +2,16 @@ import { query } from "@anthropic-ai/claude-agent-sdk";
 import { ImapFlow } from "imapflow";
 import { simpleParser } from "mailparser";
 
+// ImapFlow tries multiple IPs concurrently; when we bail early on a network
+// error the remaining in-flight sockets reject after we've already returned.
+// Suppress those secondary network rejections so they don't crash the process.
+process.on("unhandledRejection", (reason) => {
+  const msg = reason instanceof Error ? reason.message : String(reason);
+  if (/ETIMEDOUT|ECONNREFUSED|ENOTFOUND/.test(msg)) return;
+  console.error("Unhandled rejection:", reason);
+  process.exit(1);
+});
+
 // ── Config ────────────────────────────────────────────────────────────────────
 
 const LF_BASE = "https://api.lightfield.app/v1";
@@ -79,6 +89,16 @@ interface EmailSnippet {
   snippet: string;
 }
 
+async function canReachImapGmail(): Promise<boolean> {
+  const { createConnection } = await import("net");
+  return new Promise<boolean>((resolve) => {
+    const socket = createConnection({ host: "imap.gmail.com", port: 993 });
+    const timer = setTimeout(() => { socket.destroy(); resolve(false); }, 4000);
+    socket.once("connect", () => { clearTimeout(timer); socket.destroy(); resolve(true); });
+    socket.once("error", () => { clearTimeout(timer); resolve(false); });
+  });
+}
+
 async function fetchEmailsForContacts(contacts: ContactSummary[]): Promise<string> {
   const contactEmails = contacts.filter((c) => c.email).map((c) => c.email!);
   if (contactEmails.length === 0) return "";
@@ -87,6 +107,12 @@ async function fetchEmailsForContacts(contacts: ContactSummary[]): Promise<strin
   const gmailPass = process.env.GMAIL_APP_PASSWORD;
   if (!gmailUser || !gmailPass) {
     console.warn("  GMAIL_USER or GMAIL_APP_PASSWORD not set — skipping email fetch.");
+    return "";
+  }
+
+  const reachable = await canReachImapGmail();
+  if (!reachable) {
+    console.warn("  Gmail IMAP unreachable (network blocked) — skipping email fetch.");
     return "";
   }
 
